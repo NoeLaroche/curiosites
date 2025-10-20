@@ -406,6 +406,7 @@ async def create_checkout_session(checkout_req: CheckoutRequest):
 
 @api_router.get("/checkout/status/{session_id}")
 async def get_checkout_status(session_id: str):
+    # Cherche la transaction locale
     payment = await db.payment_transactions.find_one(
         {"session_id": session_id}, {"_id": 0}
     )
@@ -413,8 +414,38 @@ async def get_checkout_status(session_id: str):
         raise HTTPException(
             status_code=404, detail="Payment session not found")
 
+    # Si déjà payé localement, retourne directement
+    if payment.get("payment_status") == "paid":
+        return {
+            "payment_status": "paid",
+            "amount_total": payment.get("amount"),
+            "currency": payment.get("currency"),
+        }
+
+    # Sinon, interroge Stripe pour avoir le statut actuel
+    try:
+        session = stripe.checkout.Session.retrieve(session_id)
+        stripe_status = session.payment_status  # "paid", "unpaid", "no_payment"
+    except Exception as e:
+        logger.error(f"Error retrieving Stripe session {session_id}: {e}")
+        raise HTTPException(
+            status_code=500, detail="Stripe session retrieval failed")
+
+    # Si Stripe indique que le paiement est fait, mettre à jour Mongo
+    if stripe_status == "paid":
+        await db.payment_transactions.update_one(
+            {"session_id": session_id},
+            {"$set": {"payment_status": "paid", "status": "completed"}}
+        )
+        order_id = payment.get("order_id")
+        if order_id:
+            await db.orders.update_one(
+                {"id": order_id},
+                {"$set": {"status": "paid"}}
+            )
+
     return {
-        "payment_status": payment.get("payment_status", "unpaid"),
+        "payment_status": stripe_status,
         "amount_total": payment.get("amount"),
         "currency": payment.get("currency"),
     }
