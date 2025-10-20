@@ -170,6 +170,11 @@ def verify_password(password: str, hashed: str) -> bool:
 # Routes
 
 
+@app.get("/")
+async def root_app():
+    return {"message": "Luxury E-commerce API is running"}
+
+
 @api_router.get("/")
 async def root():
     return {"message": "Luxury E-commerce API"}
